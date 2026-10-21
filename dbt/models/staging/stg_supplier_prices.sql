@@ -3,7 +3,7 @@ WITH source_data AS (
 
     SELECT
         supplier_id,
-        sku,
+        TRIM(sku) AS sku,
         product_name_ar,
         valid_from,
         min_order_qty,

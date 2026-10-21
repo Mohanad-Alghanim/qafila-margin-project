@@ -20,3 +20,7 @@ warehouse_*/
 # Local backup files
 *.backup
 *.before_*
+
+# Local Iceberg schema-migration experiments
+/warehouse.backup-before-schema-fix/
+/warehouse.publish-test/

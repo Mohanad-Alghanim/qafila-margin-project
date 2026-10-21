@@ -26,7 +26,7 @@ classified AS (
             WHEN NOT EXISTS (
                 SELECT 1
                 FROM {{ source('raw', 'products') }} AS p
-                WHERE p.sku = s.sku
+                WHERE TRIM(p.sku) = s.sku
             )
                 THEN 'unknown_sku'
 

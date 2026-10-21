@@ -50,7 +50,7 @@ sales_lines AS (
         o.order_date,
         o.iso_week,
         i.line_no,
-        p.sku,
+        TRIM(p.sku) AS sku,
         p.category,
         i.quantity,
 
