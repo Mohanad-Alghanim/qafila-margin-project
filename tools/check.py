@@ -8,6 +8,7 @@ grader compares those with the right answer on a dataset you haven't seen.
 """
 
 from __future__ import annotations
+from decimal import Decimal
 
 import argparse
 import json
@@ -89,7 +90,7 @@ def main() -> None:
     check(m["iso_week"].between(36, 40).all(), "margin: iso_week between 36 and 40")
     diff = (m["costed_revenue_sar"] - m["cost_sar"] - m["margin_sar"]).abs()
     check((diff <= 0.011).all(), "margin: margin_sar = costed_revenue_sar - cost_sar")
-    check((m["costed_revenue_sar"] <= m["revenue_sar"] + 0.01).all(), "margin: costed_revenue_sar <= revenue_sar")
+    check((m["costed_revenue_sar"] <= m["revenue_sar"] + Decimal("0.01")).all(), "margin: costed_revenue_sar <= revenue_sar")
     check((m["uncosted_lines"] <= m["lines"]).all(), "margin: uncosted_lines <= lines")
     db = args.data_dir / "qafila_oltp.sqlite"
     if db.exists():
@@ -99,7 +100,7 @@ def main() -> None:
                 FROM order_items i JOIN orders o USING (order_id)
                 WHERE o.status = 'delivered' AND i.quantity > 0
                   AND date(datetime(o.created_at, '+3 hours')) >= '2026-08-31'""").fetchone()
-        check(int(m["lines"].sum()) == n and abs(m["revenue_sar"].sum() - rev) < 1,
+        check(int(m["lines"].sum()) == n and abs(m["revenue_sar"].sum() - Decimal(str(rev))) < 1,
               "margin: lines and revenue cover every eligible order line",
               f"expected {n} lines / {rev:,.2f} SAR, got {int(m['lines'].sum())} / {m['revenue_sar'].sum():,.2f}")
 

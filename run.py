@@ -70,6 +70,35 @@ def ingest(data_dir: Path, db: Path) -> None:
                 print(f"Loaded raw.{table}: {len(rows):,} rows")
 
 
+        # Import every supplier price CSV, including correction files.
+        supplier_files = sorted((data_dir / "suppliers").glob("prices_*.csv"))
+
+        if not supplier_files:
+            raise FileNotFoundError(
+                f"No supplier price CSV files found in {data_dir / 'suppliers'}"
+            )
+
+        supplier_frames = []
+
+        for csv_path in supplier_files:
+            frame = pd.read_csv(csv_path, dtype=str)
+            frame["source_file"] = csv_path.name
+            supplier_frames.append(frame)
+
+        supplier_prices = pd.concat(supplier_frames, ignore_index=True)
+
+        con.register("supplier_frame", supplier_prices)
+        try:
+            con.execute(
+                "CREATE OR REPLACE TABLE raw.supplier_prices "
+                "AS SELECT * FROM supplier_frame"
+            )
+        finally:
+            con.unregister("supplier_frame")
+
+        print(f"Loaded raw.supplier_prices: {len(supplier_prices):,} rows")
+
+
 def transform(db: Path) -> None:
     """Steps 2-4: build and test the dbt project in dbt/ against the DuckDB file.
 
@@ -91,16 +120,57 @@ def transform(db: Path) -> None:
 
 
 def publish(db: Path, warehouse: Path) -> None:
-    """Step 5: publish three dbt models to Iceberg.
+    """Publish DuckDB models to Iceberg with schema evolution."""
 
-        silver.product_cost_history
-        gold.weekly_margin
-        quality.price_quarantine
-
-    Update existing tables in place, never drop and recreate them.
-    """
     catalog = get_catalog(warehouse)
-    raise NotImplementedError("Step 5: publish the models to Iceberg")
+
+    tables = (
+        ("silver", "product_cost_history"),
+        ("gold", "weekly_margin"),
+        ("quality", "price_quarantine"),
+    )
+
+    with duckdb.connect(str(db), read_only=True) as con:
+
+        for namespace, table_name in tables:
+
+            identifier = f"{namespace}.{table_name}"
+
+            arrow_table = con.execute(
+                f'SELECT * FROM "{namespace}"."{table_name}"'
+            ).to_arrow_table()
+
+            if (namespace,) not in catalog.list_namespaces():
+                catalog.create_namespace(namespace)
+
+            if catalog.table_exists(identifier):
+
+                iceberg_table = catalog.load_table(identifier)
+
+                # Add new columns without dropping the table.
+                with iceberg_table.update_schema() as update:
+                    update.union_by_name(arrow_table.schema)
+
+                # Refresh table metadata after schema evolution.
+                iceberg_table.refresh()
+
+                # Preserve existing table and snapshot history.
+                iceberg_table.overwrite(arrow_table)
+
+                print(f"Updated Iceberg table: {identifier}")
+
+            else:
+
+                iceberg_table = catalog.create_table(
+                    identifier=identifier,
+                    schema=arrow_table.schema,
+                )
+
+                iceberg_table.append(arrow_table)
+
+                print(f"Created Iceberg table: {identifier}")
+
+            print(f"Published rows: {arrow_table.num_rows:,}")
 
 
 def main() -> None:

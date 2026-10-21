@@ -13,3 +13,10 @@ dbt/logs/
 dbt/dbt_packages/
 dbt/.user.yml
 logs/
+
+# Test warehouses and generated Iceberg data
+warehouse_*/
+
+# Local backup files
+*.backup
+*.before_*

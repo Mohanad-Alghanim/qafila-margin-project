@@ -1,0 +1,19 @@
+
+version: 2
+
+models:
+  - name: product_cost_history
+    description: "Historical product costs using SCD Type 2."
+
+    columns:
+      - name: sku
+        data_tests:
+          - not_null
+
+      - name: unit_cost
+        data_tests:
+          - not_null
+
+      - name: valid_from
+        data_tests:
+          - not_null
