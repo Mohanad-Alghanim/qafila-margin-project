@@ -147,7 +147,7 @@ SELECT
     iso_week,
     city,
     category,
-    lines,
+    CAST(lines AS INTEGER) AS lines,
     CAST(revenue_sar AS DOUBLE) AS revenue_sar,
     CAST(costed_revenue_sar AS DOUBLE) AS costed_revenue_sar,
     CAST(cost_sar AS DOUBLE) AS cost_sar,
@@ -157,6 +157,6 @@ SELECT
         AS DOUBLE
     ) AS margin_sar,
 
-    uncosted_lines
+    CAST(uncosted_lines AS INTEGER) AS uncosted_lines
 
 FROM weekly_aggregates
