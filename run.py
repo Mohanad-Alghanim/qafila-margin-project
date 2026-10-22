@@ -81,11 +81,21 @@ def ingest(data_dir: Path, db: Path) -> None:
         supplier_frames = []
 
         for csv_path in supplier_files:
-            frame = pd.read_csv(csv_path, dtype=str)
+            # Keep source text (including blanks and strings such as "NA") for quarantine.
+            frame = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
             frame["source_file"] = csv_path.name
             supplier_frames.append(frame)
 
         supplier_prices = pd.concat(supplier_frames, ignore_index=True)
+
+        if not {"unit_cost", "cost_sar"}.intersection(supplier_prices.columns):
+            raise ValueError("Supplier CSV files must contain unit_cost or cost_sar")
+        # Either cost-column generation is valid without the other being present.
+        for column in ("unit_cost", "cost_sar", "currency"):
+            if column not in supplier_prices.columns:
+                supplier_prices[column] = pd.Series(
+                    pd.NA, index=supplier_prices.index, dtype="string"
+                )
 
         con.register("supplier_frame", supplier_prices)
         try:

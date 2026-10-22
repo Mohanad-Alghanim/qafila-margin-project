@@ -10,10 +10,14 @@ grader compares those with the right answer on a dataset you haven't seen.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sqlite3
 import sys
+from collections import Counter
 from contextlib import closing
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 import pandas as pd
@@ -81,21 +85,59 @@ def main() -> None:
     q = df["quality.price_quarantine"]
     bad = set(q["reason"]) - {"unknown_sku", "invalid_cost"}
     check(not bad, "quarantine: reason is 'unknown_sku' or 'invalid_cost'", f"found {bad}")
-    check(len(q) > 0, "quarantine: the planted bad supplier rows are there", "empty: the data has some")
+    db = args.data_dir / "qafila_oltp.sqlite"
+    if db.exists():
+        with closing(sqlite3.connect(db)) as con:
+            product_skus = {sku.strip() for (sku,) in con.execute("SELECT sku FROM products")}
+        expected_quarantine = []
+        translation = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫,", "01234567890123456789..")
+        for path in sorted((args.data_dir / "suppliers").glob("prices_*.csv")):
+            with path.open(encoding="utf-8-sig", newline="") as source:
+                for row in csv.DictReader(source):
+                    sku = row["sku"].strip()
+                    raw_cost = row.get("unit_cost", row.get("cost_sar", ""))
+                    try:
+                        cost = Decimal(raw_cost.strip().translate(translation))
+                        valid_cost = cost.is_finite() and cost.quantize(
+                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                        ) > 0
+                    except InvalidOperation:
+                        valid_cost = False
+                    reason = "unknown_sku" if sku not in product_skus else "invalid_cost" if not valid_cost else None
+                    if reason:
+                        expected_quarantine.append((path.name, sku, date.fromisoformat(row["valid_from"]), raw_cost, reason))
+        actual_quarantine = [
+            (r.source_file, r.sku, pd.Timestamp(r.valid_from).date(), r.raw_cost, r.reason)
+            for r in q.itertuples(index=False)
+        ]
+        check(Counter(actual_quarantine) == Counter(expected_quarantine),
+              "quarantine: every rejected source row matches, including its original cost text")
+    else:
+        check(len(q) > 0, "quarantine: the planted bad supplier rows are there", "empty: the data has some")
 
     # 4. weekly margin
     m = df["gold.weekly_margin"]
     check(not m.duplicated(["iso_week", "city", "category"]).any(), "margin: one row per (iso_week, city, category)")
-    check(m["iso_week"].between(36, 40).all(), "margin: iso_week between 36 and 40")
+    if db.exists():
+        with closing(sqlite3.connect(db)) as con:
+            eligible_dates = con.execute("""
+                SELECT DISTINCT date(datetime(o.created_at, '+3 hours'))
+                FROM order_items i JOIN orders o USING (order_id)
+                WHERE o.status = 'delivered' AND i.quantity > 0
+                  AND date(datetime(o.created_at, '+3 hours')) >= '2026-08-31'
+            """).fetchall()
+        expected_weeks = {date.fromisoformat(day).isocalendar().week for (day,) in eligible_dates}
+        check(set(m["iso_week"]) == expected_weeks, "margin: ISO weeks match eligible Riyadh order dates")
+    else:
+        check(m["iso_week"].between(1, 53).all(), "margin: iso_week is a valid ISO week")
     diff = (m["costed_revenue_sar"] - m["cost_sar"] - m["margin_sar"]).abs()
     check((diff <= 0.011).all(), "margin: margin_sar = costed_revenue_sar - cost_sar")
     check((m["costed_revenue_sar"] <= m["revenue_sar"] + 0.01).all(), "margin: costed_revenue_sar <= revenue_sar")
     check((m["uncosted_lines"] <= m["lines"]).all(), "margin: uncosted_lines <= lines")
-    db = args.data_dir / "qafila_oltp.sqlite"
     if db.exists():
         with closing(sqlite3.connect(db)) as con:
             n, rev = con.execute("""
-                SELECT count(*), round(sum(round(i.quantity * i.unit_price - i.discount, 2)), 2)
+                SELECT count(*), coalesce(round(sum(round(i.quantity * i.unit_price - i.discount, 2)), 2), 0)
                 FROM order_items i JOIN orders o USING (order_id)
                 WHERE o.status = 'delivered' AND i.quantity > 0
                   AND date(datetime(o.created_at, '+3 hours')) >= '2026-08-31'""").fetchone()
@@ -105,7 +147,7 @@ def main() -> None:
 
     # 5. Iceberg history and dbt tests
     snaps = len(cat.load_table("gold.weekly_margin").snapshots())
-    check(snaps >= 1, f"Iceberg: gold.weekly_margin has {snaps} snapshot(s); run again and this number should grow")
+    check(snaps >= 1 or m.empty, f"Iceberg: gold.weekly_margin has {snaps} snapshot(s); empty tables may have none")
     rr = ROOT / "dbt" / "target" / "run_results.json"
     if check(rr.exists(), "dbt: run_results.json exists", "run dbt build (run.py does)"):
         tests = [r for r in json.loads(rr.read_text(encoding="utf-8"))["results"] if r["unique_id"].startswith("test.")]
