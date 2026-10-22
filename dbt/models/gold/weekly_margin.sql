@@ -148,13 +148,13 @@ SELECT
     city,
     category,
     lines,
-    revenue_sar,
-    costed_revenue_sar,
-    cost_sar,
+    CAST(revenue_sar AS DOUBLE) AS revenue_sar,
+    CAST(costed_revenue_sar AS DOUBLE) AS costed_revenue_sar,
+    CAST(cost_sar AS DOUBLE) AS cost_sar,
 
     CAST(
         costed_revenue_sar - cost_sar
-        AS DECIMAL(18, 2)
+        AS DOUBLE
     ) AS margin_sar,
 
     uncosted_lines
